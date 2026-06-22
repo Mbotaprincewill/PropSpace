@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PropSpace Marketplace</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Shared async API network interceptor mapping headers dynamically
+        const runFetch = async (url, options = {}) => {
+            const token = localStorage.getItem('token');
+            options.headers = { 'Content-Type': 'application/json', ...options.headers };
+            if (token) options.headers['Authorization'] = `Bearer ${token}`;
+            
+            const response = await fetch(url, options);
+            if (response.status === 401) {
+                localStorage.clear();
+                window.location.hash = '#login';
+            }
+            return response;
+        };
+
+        function App() {
+            const [currentView, setCurrentView] = React.useState('feed');
+            const [items, setItems] = React.useState([]);
+            const [statusLoading, setStatusLoading] = React.useState(false);
+            const [networkError, setNetworkError] = React.useState(null);
+            const [userSession, setUserSession] = React.useState(JSON.parse(localStorage.getItem('user')));
+
+            // Filter parameter states (Page 1 Specification)
+            const [citySearch, setCitySearch] = React.useState('');
+            const [priceSearch, setPriceSearch] = React.useState('');
+
+            // Property deployment schema bounds
+            const [formInputs, setFormInputs] = React.useState({ title: '', description: '', price: '', location: '', type: 'Apartment', imageUrl: '' });
+            const [editingTargetId, setEditingTargetId] = React.useState(null);
+
+            React.useEffect(() => {
+                const handleViewRouting = () => {
+                    const hashView = window.location.hash.replace('#', '') || 'feed';
+                    if (['my-listings', 'manage-property'].includes(hashView) && !localStorage.getItem('token')) {
+                        window.location.hash = '#login';
+                        return;
+                    }
+                    setCurrentView(hashView);
+                };
+                window.addEventListener('hashchange', handleViewRouting);
+                handleViewRouting();
+                loadMarketplaceFeed();
+                return () => window.removeEventListener('hashchange', handleViewRouting);
+            }, []);
+
+            const loadMarketplaceFeed = async () => {
+                setStatusLoading(true);
+                setNetworkError(null);
+                try {
+                    let routePath = '/api/properties';
+                    let args = [];
+                    if (citySearch) args.push(`city=${citySearch}`);
+                    if (priceSearch) args.push(`maxPrice=${priceSearch}`);
+                    if (args.length) routePath += `?${args.join('&')}`;
+
+                    const res = await runFetch(routePath);
+                    const data = await res.json();
+                    if (res.ok) setItems(data);
+                    else setNetworkError(data.message);
+                } catch (err) {
+                    setNetworkError("Failed to resolve channel parameters to backend.");
+                } finally {
+                    setStatusLoading(false);
+                }
+            };
+
+            const loadDashboardFeed = async () => {
+                setStatusLoading(true);
+                try {
+                    const res = await runFetch('/api/properties/mine');
+                    const data = await res.json();
+                    if (res.ok) setItems(data);
+                } catch (err) {
+                    setNetworkError("Failed to resolve user context parameters.");
+                } finally {
+                    setStatusLoading(false);
+                }
+            };
+
+            React.useEffect(() => {
+                if (currentView === 'feed') loadMarketplaceFeed();
+                if (currentView === 'my-listings') loadDashboardFeed();
+            }, [currentView]);
+
+            const triggerAuth = async (e, type) => {
+                e.preventDefault();
+                const email = e.target.email.value;
+                const password = e.target.password.value;
+                const username = type === 'register' ? e.target.username.value : undefined;
+
+                try {
+                    const res = await runFetch(`/api/auth/${type}`, {
+                        method: 'POST',
+                        body: JSON.stringify({ username, email, password })
+                    });
+                    const result = await res.json();
+                    if (res.ok) {
+                        localStorage.setItem('token', result.token);
+                        localStorage.setItem('user', JSON.stringify(result.user));
+                        setUserSession(result.user);
+                        window.location.hash = '#feed';
+                    } else {
+                        alert(result.message);
+                    }
+                } catch (err) {
+                    alert("Authentication transmission failure.");
+                }
+            };
+
+            const triggerPropertySave = async (e) => {
+                e.preventDefault();
+                // Client validation block (Page 2 Requirement)
+                if (!formInputs.title || !formInputs.price || !formInputs.location) {
+                    alert("Validation Error: Incomplete properties schema format detected.");
+                    return;
+                }
+
+                const HTTP_VERB = editingTargetId ? 'PUT' : 'POST';
+                const endpointUrl = editingTargetId ? `/api/properties/${editingTargetId}` : '/api/properties';
+
+                const res = await runFetch(endpointUrl, {
+                    method: HTTP_VERB,
+                    body: JSON.stringify(formInputs)
+                });
+                
+                if (res.ok) {
+                    setFormInputs({ title: '', description: '', price: '', location: '', type: 'Apartment', imageUrl: '' });
+                    setEditingTargetId(null);
+                    window.location.hash = '#my-listings';
+                } else {
+                    alert("Error committing changes to database system maps.");
+                }
+            };
+
+            return (
+                <div class="min-h-screen flex flex-col font-sans">
+                    {/* Navigation Bar */}
+                    <nav class="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-50 shadow-sm">
+                        <span class="text-xl font-black text-blue-600 cursor-pointer" onClick={() => window.location.hash = '#feed'}>PropSpace</span>
+                        <div class="flex gap-6 items-center text-sm font-semibold text-slate-600">
+                            <a href="#feed" class="hover:text-blue-600 transition">Marketplace</a>
+                            {userSession ? (
+                                <React.Fragment>
+                                    <a href="#my-listings" class="hover:text-blue-600 transition">My Listings Workspace</a>
+                                    <span class="text-slate-300">|</span>
+                                    <span class="text-slate-800 font-bold">User: {userSession.username}</span>
+                                    <button onClick={() => { localStorage.clear(); setUserSession(null); window.location.hash = '#feed'; }} class="px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-md transition">Sign Out</button>
+                                </React.Fragment>
+                            ) : (
+                                <a href="#login" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition shadow-sm">Log In / Sign Up</a>
+                            )}
+                        </div>
+                    </nav>
+
+                    <main class="flex-1 max-w-6xl w-full mx-auto p-6">
+                        {/* Auth Form Terminal */}
+                        {(currentView === 'login' || currentView === 'register') && (
+                            <div class="max-w-md mx-auto bg-white border border-slate-200 p-8 shadow-lg rounded-2xl mt-12">
+                                <h3 class="text-xl font-bold text-center mb-6 text-slate-800">{currentView === 'login' ? 'System Portal Access' : 'Register Core Identity'}</h3>
+                                <form onSubmit={(e) => triggerAuth(e, currentView)} class="flex flex-col gap-4">
+                                    {currentView === 'register' && (
+                                        <div>
+                                            <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Username</label>
+                                            <input name="username" type="text" required class="w-full border border-slate-200 rounded px-3 py-2.5 focus:border-blue-500 focus:outline-none" />
+                                        </div>
+                                    )}
+                                    <div>
+                                        <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Email</label>
+                                        <input name="email" type="email" required class="w-full border border-slate-200 rounded px-3 py-2.5 focus:border-blue-500 focus:outline-none" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Password</label>
+                                        <input name="password" type="password" required class="w-full border border-slate-200 rounded px-3 py-2.5 focus:border-blue-500 focus:outline-none" />
+                                    </div>
+                                    <button type="submit" class="w-full py-3 bg-blue-600 text-white font-bold rounded shadow-md hover:bg-blue-700 transition">
+                                        {currentView === 'login' ? 'Authenticate' : 'Register Account'}
+                                    </button>
+                                    <div class="text-xs text-center mt-2">
+                                        <a href={currentView === 'login' ? '#register' : '#login'} class="text-blue-500 font-bold hover:underline">
+                                            {currentView === 'login' ? "Register Profile Instead" : "Existing Identity? Log In"}
+                                        </a>
+                                    </div>
+                                </form>
+                            </div>
+                        )}
+
+                        {/* Marketplace Public Search Feed Display (Page 2 UI requirements) */}
+                        {currentView === 'feed' && (
+                            <React.Fragment>
+                                <div class="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm mb-6 flex flex-wrap gap-4 items-end">
+                                    <div class="flex-1 min-w-[180px]">
+                                        <label class="block text-xs font-bold text-slate-500 mb-1">Filter City Location</label>
+                                        <input value={citySearch} onChange={(e) => setCitySearch(e.target.value)} type="text" placeholder="e.g. Douala" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:outline-none" />
+                                    </div>
+                                    <div class="flex-1 min-w-[180px]">
+                                        <label class="block text-xs font-bold text-slate-500 mb-1">Ceiling Cost Price ($)</label>
+                                        <input value={priceSearch} onChange={(e) => setPriceSearch(e.target.value)} type="number" placeholder="Max dynamic cap" class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:outline-none" />
+                                    </div>
+                                    <button onClick={loadMarketplaceFeed} class="px-6 py-2 bg-blue-600 text-white text-sm font-bold rounded hover:bg-blue-700 transition shadow-sm h-[38px]">Query Filters</button>
+                                </div>
+
+                                {statusLoading && <div class="text-center py-12 text-slate-500 font-medium animate-pulse">⏳ Processing data arrays asynchronously from database clusters...</div>}
+                                {networkError && <div class="bg-red-50 border border-red-200 text-red-600 p-4 rounded-xl text-center font-medium my-4">Error Flag: {networkError}</div>}
+                                {!statusLoading && items.length === 0 && <div class="text-center py-16 bg-white border border-dashed rounded-2xl text-slate-400 font-medium">📭 Empty dataset match returned from database registry.</div>}
+
+                                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                                    {items.map(p => (
+                                        <div key={p._id} class="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col transition hover:shadow-md">
+                                            <img class="h-44 w-full object-cover bg-slate-100" src={p.imageUrl} alt="Property facade" />
+                                            <div class="p-5 flex-1 flex flex-col justify-between">
+                                                <div>
+                                                    <div class="flex justify-between items-center mb-1">
+                                                        <span class="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-bold">{p.type}</span>
+                                                        <span class="text-lg font-black text-blue-600">${p.price.toLocaleString()}</span>
+                                                    </div>
+                                                    <h4 class="text-md font-bold text-slate-900 mb-1 truncate">{p.title}</h4>
+                                                    <p class="text-xs text-slate-500 mb-3">📍 {p.location}</p>
+                                                    <p class="text-slate-600 text-xs line-clamp-3 leading-relaxed">{p.description}</p>
+                                                </div>
+                                                
+                                                {userSession && (userSession.id === p.author || userSession.id === p.author?._id) && (
+                                                    <div class="flex gap-2 border-t border-slate-100 pt-3 mt-4">
+                                                        <button onClick={() => { setFormInputs(p); setEditingTargetId(p._id); window.location.hash = '#manage-property'; }} class="flex-1 py-1.5 text-xs bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg font-semibold transition">Edit</button>
+                                                        <button onClick={async () => { if(confirm('Expunge entry permanently?')){ await runFetch(`/api/properties/${p._id}`, { method: 'DELETE' }); loadMarketplaceFeed(); } }} class="flex-1 py-1.5 text-xs bg-red-50 hover:bg-red-100 text-red-600 rounded-lg font-semibold transition">Delete</button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </React.Fragment>
+                        )}
+
+                        {/* Form Editor For Property Registry Deployment */}
+                        {currentView === 'manage-property' && (
+                            <div class="max-w-xl mx-auto bg-white border border-slate-200 p-8 shadow-xl rounded-2xl">
+                                <h3 class="text-lg font-bold mb-6 text-slate-800">{editingTargetId ? 'Modify Listed Configuration' : 'Deploy Real-Time Entry'}</h3>
+                                <form onSubmit={triggerPropertySave} class="flex flex-col gap-4">
+                                    <div>
+                                        <label class="block text-xs font-bold text-slate-500 mb-1">Property Header Title *</label>
+                                        <input value={formInputs.title} onChange={e => setFormInputs({...formInputs, title: e.target.value})} type="text" required class="w-full border border-slate-200 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="block text-xs font-bold text-slate-500 mb-1">Cost Price Value ($) *</label>
+                                            <input value={formInputs.price} onChange={e => setFormInputs({...formInputs, price: Number(e.target.value)})} type="number" required class="w-full border border-slate-200 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs font-bold text-slate-500 mb-1">Classification Select *</label>
+                                            <select value={formInputs.type} onChange={e => setFormInputs({...formInputs, type: e.target.value})} class="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:border-blue-500">
+                                                <option value="Apartment">Apartment</option>
+                                                <option value="House">House</option>
+                                                <option value="Studio">Studio</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-slate-500 mb-1">City Location Address *</label>
+                                        <input value={formInputs.location} onChange={e => setFormInputs({...formInputs, location: e.target.value})} type="text" required class="w-full border border-slate-200 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-slate-500 mb-1">External Asset Image URL</label>
+                                        <input value={formInputs.imageUrl} onChange={e => setFormInputs({...formInputs, imageUrl: e.target.value})} type="url" placeholder="https://images.unsplash.com/photo-..." class="w-full border border-slate-200 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-slate-500 mb-1">Detailed Features Context Description</label>
+                                        <textarea value={formInputs.description} onChange={e => setFormInputs({...formInputs, description: e.target.value})} rows="3" class="w-full border border-slate-200 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"></textarea>
+                                    </div>
+                                    <div class="flex gap-4 mt-2">
+                                        <button type="submit" class="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-md hover:bg-blue-700 transition">Save Entry</button>
+                                        <button type="button" onClick={() => window.location.hash = '#my-listings'} class="px-5 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition">Cancel</button>
+                                    </div>
+                                </form>
+                            </div>
+                        )}
+
+                        {/* Private Dashboard Portfolio Display */}
+                        {currentView === 'my-listings' && (
+                            <React.Fragment>
+                                <div class="flex justify-between items-center mb-6">
+                                    <h3 class="text-xl font-bold text-slate-900">Personal Workspace Portfolio</h3>
+                                    <button onClick={() => { setEditingTargetId(null); setFormInputs({ title: '', description: '', price: '', location: '', type: 'Apartment', imageUrl: '' }); window.location.hash = '#manage-property'; }} class="px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded-lg hover:bg-blue-700 transition shadow-sm">Add New Listing</button>
+                                </div>
+                                {statusLoading && <div class="text-center py-10 text-slate-500">⏳ Accessing portfolio registries...</div>}
+                                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                                    {items.map(p => (
+                                        <div key={p._id} class="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+                                            <img class="h-44 w-full object-cover bg-slate-100" src={p.imageUrl} alt="Personal listing block" />
+                                            <div class="p-4 flex-1 flex flex-col justify-between">
+                                                <div>
+                                                    <div class="flex justify-between items-center mb-1">
+                                                        <span class="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-bold">{p.type}</span>
+                                                        <span class="text-lg font-bold text-blue-600">${p.price}</span>
+                                                    </div>
+                                                    <h4 class="text-md font-bold text-slate-900 mb-1 truncate">{p.title}</h4>
+                                                    <p class="text-xs text-slate-500 mb-2">📍 {p.location}</p>
+                                                    <p class="text-slate-600 text-xs line-clamp-2">{p.description}</p>
+                                                </div>
+                                                <div class="flex gap-2 border-t border-slate-100 pt-3 mt-4">
+                                                    <button onClick={() => { setFormInputs(p); setEditingTargetId(p._id); window.location.hash = '#manage-property'; }} class="flex-1 py-1.5 text-xs bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg font-semibold transition">Edit</button>
+                                                    <button onClick={async () => { if(confirm('Expunge target entries?')){ await runFetch(`/api/properties/${p._id}`, { method: 'DELETE' }); loadDashboardFeed(); } }} class="flex-1 py-1.5 text-xs bg-red-50 hover:bg-red-100 text-red-600 rounded-lg font-semibold transition">Delete</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </React.Fragment>
+                        )}
+                    </main>
+                </div>
+            );
+        }
+
+        const appRoot = ReactDOM.createRoot(document.getElementById('root'));
+        appRoot.render(<App />);
+    </script>
+</body>
+</html>
